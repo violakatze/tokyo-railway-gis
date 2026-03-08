@@ -1,7 +1,7 @@
 # 東京都鉄道GISアプリ - プロジェクト概要
 
 ## アプリの概要
-OpenLayersを使って東京都の鉄道路線を地図上に表示し、路線をクリックすると路線名・運営会社名がポップアップ表示されるWebアプリ。GitHub Pagesで公開する静的アプリ。
+OpenLayersを使って東京都の鉄道路線・駅を地図上に表示するWebアプリ。路線をクリックすると路線名・運営会社名が、駅にホバーすると駅名・路線名がポップアップ表示される。GitHub Pagesで公開する静的アプリ。
 
 ---
 
@@ -27,7 +27,8 @@ DBやバックエンドサーバーは不要。完全静的アプリ。
 |------|----------|------|
 | 1（最下層） | 地理院タイル（淡色） | 外部サーバーから取得。海・川・地名が薄く表示される |
 | 2 | 東京都市区町村境界（GeoJSON） | グレーで塗りつぶし・ボーダー表示。目立ちすぎないよう透明度を設定 |
-| 3（最上層） | 東京都鉄道路線（GeoJSON） | 事業者ごとに色を変えた路線。クリックで路線名ポップアップ表示 |
+| 3 | 東京都鉄道路線（GeoJSON） | 事業者ごとに色を変えた路線。クリックで路線名ポップアップ表示 |
+| 4（最上層） | 東京都駅（GeoJSON） | 路線より太い線分で表示。ホバーで駅名・路線名ポップアップ表示 |
 
 ---
 
@@ -50,26 +51,51 @@ DBやバックエンドサーバーは不要。完全静的アプリ。
 - 事業者（N02_004）ごとに異なる色を割り当てる
 - 路線の太さはデフォルト（調整可）
 
+### 駅
+- ジオメトリ: MultiLineString（N02データそのまま使用）
+- 路線より太い線分で表示（路線との視覚的区別のため）
+- 地図上に駅名テキストは表示しない（ホバー時のポップアップのみ）
+
 ---
 
 ## ポップアップ仕様
 
+### 路線ポップアップ（クリック）
 - **表示タイミング**: 鉄道路線フィーチャをクリックしたとき
 - **表示内容**: 路線名（N02_003）・運営会社名（N02_004）
 - **表示位置**: クリックした座標付近
 - **非表示**: 路線以外の場所をクリックしたら閉じる
+
+### 駅ポップアップ（ホバー）
+- **表示タイミング**: 駅線分（N02_005を持つフィーチャ）にマウスホバーしたとき
+- **表示内容**: 駅名（N02_005）・路線名（N02_003）
+- **表示位置**: ホバーした座標付近
+- **非表示**: 駅線分から外れたら閉じる
+
+### 共通
 - **実装**: OpenLayers の Overlay を使用、スタイルはMUIコンポーネントで構成
 
 ---
 
-## クリックで路線名表示の実装方針
+## インタラクションの実装方針
 
+### 路線クリック
 ```
 - map.on('click', ...) でクリックイベントを取得
-- map.forEachFeatureAtPixel() でクリック位置のフィーチャを取得
+- map.forEachFeatureAtPixel() でクリック位置の路線フィーチャを取得
 - feature.get('N02_003') で路線名、feature.get('N02_004') で運営会社名を取得
 - OpenLayersの Overlay を使ってポップアップ表示
 - 路線以外をクリックしたらポップアップを閉じる
+```
+
+### 駅ホバー
+```
+- map.on('pointermove', ...) でホバーイベントを取得
+- map.forEachFeatureAtPixel() でホバー位置のフィーチャを取得
+- N02_005 を持つフィーチャを駅として判定
+- feature.get('N02_005') で駅名、feature.get('N02_003') で路線名を取得
+- OpenLayersの Overlay を使ってポップアップ表示
+- 駅フィーチャから外れたらポップアップを閉じる
 ```
 
 ---
@@ -78,24 +104,53 @@ DBやバックエンドサーバーは不要。完全静的アプリ。
 
 | データ | 提供元 | URL |
 |--------|--------|-----|
-| 鉄道路線（東京都） | 国土数値情報 | https://nlftp.mlit.go.jp/ksj/ |
+| 鉄道路線・駅（東京都） | 国土数値情報 | https://nlftp.mlit.go.jp/ksj/ |
 | 市区町村境界（東京都） | 国土数値情報 | https://nlftp.mlit.go.jp/ksj/ |
 | 地理院タイル（淡色） | 国土地理院 | タイルURL指定で自動取得 |
 
 ### 国土数値情報からのダウンロード手順
-1. https://nlftp.mlit.go.jp/ksj/ にアクセス
-2. 「鉄道」→ 東京都を選択してダウンロード（GeoJSON形式）
-3. 「行政区域」→ 東京都を選択してダウンロード（GeoJSON形式）
-4. Shapefile形式しかない場合は mapshaper（https://mapshaper.org）でGeoJSONに変換
+
+#### 鉄道路線・駅データ
+N02ファイルには路線（LineString）と駅（Point）の両方が含まれる。
+
+1. https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-v3_1.html にアクセス
+2. 全国データをダウンロード（GeoJSON形式、またはShapefile）
+3. Shapefile形式の場合は mapshaper（https://mapshaper.org）でGeoJSONに変換
+4. mapshaperのコンソールで東京都内に絞り込む：
+   ```
+   filter 'N02_004 && N02_004.match(/東京/)'
+   ```
+   ※ 東京都を跨ぐ路線・駅は一部含まれるが実用上問題なし
+5. ジオメトリ種別で2ファイルに分けてExport（GeoJSON）：
+   - LineStringのみ → `tokyo_railway.geojson`（路線）
+   - Pointのみ → `tokyo_station.geojson`（駅）
+
+   mapshaperでの分割例：
+   ```
+   # 路線のみ
+   filter-geom type==="LineString"
+   export tokyo_railway.geojson
+
+   # 駅のみ（元データに戻してから）
+   filter-geom type==="Point"
+   export tokyo_station.geojson
+   ```
+
+#### 市区町村境界データ（`tokyo_municipality.geojson`）
+1. https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-v3_1.html にアクセス
+2. 「東京都」の行からダウンロード（GeoJSON形式、またはShapefile）
+3. Shapefile形式の場合は mapshaper（https://mapshaper.org）でGeoJSONに変換
+4. `tokyo_municipality.geojson` にリネーム
 
 ### GeoJSONの属性（鉄道データ）
 
-| 属性名 | 内容 |
-|--------|------|
-| N02_001 | 鉄道区分（新幹線・在来線など） |
-| N02_002 | 事業者種別 |
-| N02_003 | 路線名 |
-| N02_004 | 運営会社名 |
+| 属性名 | 内容 | 対象フィーチャ |
+|--------|------|--------------|
+| N02_001 | 鉄道区分（新幹線・在来線など） | 路線・駅 |
+| N02_002 | 事業者種別 | 路線・駅 |
+| N02_003 | 路線名 | 路線・駅 |
+| N02_004 | 運営会社名 | 路線・駅 |
+| N02_005 | 駅名 | 駅のみ |
 
 ---
 
@@ -113,15 +168,22 @@ https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png
 tokyo-railway-gis/
 ├── public/
 │   └── data/
-│       ├── tokyo_municipality.geojson
-│       └── tokyo_railway.geojson
+│       ├── tokyo_municipality.geojson  # 市区町村境界
+│       ├── tokyo_railway.geojson       # 鉄道路線（LineString）
+│       └── tokyo_station.geojson       # 駅（Point）
 ├── src/
+│   ├── __tests__/
+│   │   ├── useMap.test.ts
+│   │   └── ...
 │   ├── components/
 │   │   ├── MapView.tsx       # 地図本体
 │   │   └── Popup.tsx         # ポップアップUI（MUIコンポーネント）
 │   ├── hooks/
 │   │   └── useMap.ts         # OpenLayers初期化・イベント処理
 │   └── App.tsx
+├── e2e/
+│   ├── map.spec.ts
+│   └── ...
 ├── vite.config.ts
 └── package.json
 ```
@@ -201,17 +263,6 @@ export default MapView;
 ### テストファイルの配置
 - ユニットテスト: `src/__tests__/` 以下にまとめる
 - E2Eテスト: `e2e/` ディレクトリにまとめる
-
-```
-tokyo-railway-gis/
-├── src/
-│   ├── __tests__/
-│   │   ├── useMap.test.ts
-│   │   └── ...
-├── e2e/
-│   ├── map.spec.ts
-│   └── ...
-```
 
 ### カバレッジ
 - Vitestのカバレッジ機能（`@vitest/coverage-v8`）で計測する
